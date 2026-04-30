@@ -1,0 +1,27 @@
+# driftwatch example configuration
+# Copy to driftwatch.yaml and adjust for your environment.
+
+# How often the daemon polls each service for drift.
+# Accepts Go duration strings: 10s, 1m, 5m, etc.
+poll_interval: 30s
+
+# Log verbosity: debug | info | warn | error
+log_level: info
+
+# List of services to monitor for configuration drift.
+services:
+  - name: auth-service
+    # Path (relative or absolute) or URL pointing to the declared
+    # configuration state stored in version control.
+    declared_at: ./configs/services/auth.yaml
+    # HTTP endpoint exposed by the running service that returns
+    # its current effective configuration (JSON or YAML).
+    endpoint: http://auth-service.internal:8080/config
+
+  - name: api-gateway
+    declared_at: ./configs/services/api-gateway.yaml
+    endpoint: http://api-gateway.internal:8080/config
+
+  - name: worker
+    declared_at: ./configs/services/worker.yaml
+    endpoint: http://worker.internal:8080/config
