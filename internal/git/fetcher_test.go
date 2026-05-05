@@ -94,6 +94,20 @@ func TestReadFileAtRef_MissingFile(t *testing.T) {
 	}
 }
 
+// TestReadFileAtRef_InvalidRef verifies that ReadFileAtRef returns an error
+// when given a ref that does not exist in the repository.
+func TestReadFileAtRef_InvalidRef(t *testing.T) {
+	dir := initTestRepo(t, "config.yaml", "env: prod")
+	f, err := git.NewFetcher(dir)
+	if err != nil {
+		t.Fatalf("NewFetcher: %v", err)
+	}
+	_, err = f.ReadFileAtRef("0000000000000000000000000000000000000000", "config.yaml")
+	if err == nil {
+		t.Fatal("expected error for invalid ref, got nil")
+	}
+}
+
 func TestRepoExists(t *testing.T) {
 	dir := initTestRepo(t, "f.txt", "x")
 	if !git.RepoExists(dir) {
