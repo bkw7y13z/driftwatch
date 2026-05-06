@@ -84,3 +84,15 @@ func TestLoad_FileNotFound(t *testing.T) {
 		t.Fatal("expected error for missing file, got nil")
 	}
 }
+
+func TestLoad_EmptyServicesList(t *testing.T) {
+	path := writeTempConfig(t, `
+poll_interval: 5s
+services: []
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for empty services list, got nil")
+	}
+}
