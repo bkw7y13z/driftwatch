@@ -36,6 +36,13 @@ func TestReport_HasDrift_True(t *testing.T) {
 	}
 }
 
+func TestReport_HasDrift_Empty(t *testing.T) {
+	r := makeReport([]Result{})
+	if r.HasDrift() {
+		t.Error("expected no drift for empty results")
+	}
+}
+
 func TestReport_Summary(t *testing.T) {
 	r := makeReport([]Result{
 		{Status: StatusMatch},
@@ -45,6 +52,17 @@ func TestReport_Summary(t *testing.T) {
 	})
 	matched, drifted, missing := r.Summary()
 	if matched != 2 || drifted != 1 || missing != 1 {
+		t.Errorf("unexpected summary: %d/%d/%d", matched, drifted, missing)
+	}
+}
+
+func TestReport_Summary_AllMatch(t *testing.T) {
+	r := makeReport([]Result{
+		{Status: StatusMatch},
+		{Status: StatusMatch},
+	})
+	matched, drifted, missing := r.Summary()
+	if matched != 2 || drifted != 0 || missing != 0 {
 		t.Errorf("unexpected summary: %d/%d/%d", matched, drifted, missing)
 	}
 }
