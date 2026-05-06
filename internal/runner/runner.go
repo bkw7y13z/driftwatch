@@ -1,83 +1,85 @@
+// Package runner wires together the scheduler, git fetcher, drift detector,
+// watcher, snapshot store, metrics recorder, and notifier into a single
+// long-running daemon loop.
 package runner
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/yourorg/driftwatch/internal/config"
 	"github.com/yourorg/driftwatch/internal/drift"
 	"github.com/yourorg/driftwatch/internal/git"
+	"github.com/yourorg/driftwatch/internal/metrics"
 	"github.com/yourorg/driftwatch/internal/notify"
+	"github.com/yourorg/driftwatch/internal/scheduler"
+	"github.com/yourorg/driftwatch/internal/snapshot"
+	"github.com/yourorg/driftwatch/internal/watcher"
 )
 
-// Runner orchestrates periodic drift detection for all configured services.
+// Runner orchestrates a single drift-check cycle on every scheduler tick.
 type Runner struct {
-	cfg      *config.Config
-	fetcher  *git.Fetcher
-	detector *drift.Detector
-	notifier *notify.Notifier
-	logger   *slog.Logger
+	cfg     *config.Config
+	fetcher *git.Fetcher
+	watch   *watcher.Watcher
+	snap    *snapshot.Store
+	met     *metrics.Metrics
+	log     *slog.Logger
 }
 
-// New creates a Runner from the provided config.
-func New(cfg *config.Config, logger *slog.Logger) (*Runner, error) {
-	fetcher, err := git.NewFetcher(cfg.RepoPath)
+// New validates the configuration and constructs a Runner ready to start.
+func New(cfg *config.Config, log *slog.Logger) (*Runner, error) {
+	if log == nil {
+		log = slog.Default()
+	}
+	f, err := git.NewFetcher(cfg.RepoPath, log)
 	if err != nil {
 		return nil, fmt.Errorf("runner: init fetcher: %w", err)
 	}
-
-	detector := drift.NewDetector(fetcher, cfg.GitRef)
-	notifier := notify.New(cfg, logger)
-
-	return &Runner{
-		cfg:      cfg,
-		fetcher:  fetcher,
-		detector: detector,
-		notifier: notifier,
-		logger:   logger,
-	}, nil
+	w := watcher.New(cfg.WatchPaths, log)
+	s := snapshot.New(cfg.SnapshotPath)
+	m := metrics.New()
+	return &Runner{cfg: cfg, fetcher: f, watch: w, snap: s, met: m, log: log}, nil
 }
 
-// RunOnce performs a single drift-detection pass across all services.
-func (r *Runner) RunOnce(ctx context.Context) error {
-	r.logger.Info("starting drift check", "ref", r.cfg.GitRef, "services", len(r.cfg.Services))
-
-	report, err := r.detector.CompareAll(ctx, r.cfg.Services)
-	if err != nil {
-		return fmt.Errorf("runner: compare: %w", err)
-	}
-
-	if err := r.notifier.Notify(ctx, report); err != nil {
-		return fmt.Errorf("runner: notify: %w", err)
-	}
-
-	r.logger.Info("drift check complete", "summary", report.Summary())
-	return nil
-}
-
-// Start runs drift detection on the configured interval until ctx is cancelled.
+// Start blocks until ctx is cancelled, running a drift check on every tick
+// produced by the scheduler.
 func (r *Runner) Start(ctx context.Context) error {
-	interval := time.Duration(r.cfg.IntervalSeconds) * time.Second
-	r.logger.Info("runner started", "interval", interval)
+	sched := scheduler.New(r.cfg.Interval, r.log)
+	return sched.Run(ctx, func(ctx context.Context) error {
+		return r.check(ctx)
+	})
+}
 
-	if err := r.RunOnce(ctx); err != nil {
-		r.logger.Error("drift check failed", "err", err)
+// check performs one full drift-detection cycle.
+func (r *Runner) check(ctx context.Context) error {
+	det := drift.NewDetector(r.log)
+
+	states, err := r.watch.ReadAll(ctx, r.cfg.WatchFiles)
+	if err != nil {
+		return fmt.Errorf("runner: read live files: %w", err)
 	}
+	live := watcher.ToLiveContent(states)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			r.logger.Info("runner stopped")
-			return ctx.Err()
-		case <-ticker.C:
-			if err := r.RunOnce(ctx); err != nil {
-				r.logger.Error("drift check failed", "err", err)
-			}
+	declared := make(map[string][]byte, len(r.cfg.WatchFiles))
+	for _, relPath := range r.cfg.WatchFiles {
+		data, err := r.fetcher.ReadFileAtRef(ctx, relPath, r.cfg.GitRef)
+		if err != nil {
+			r.log.Warn("runner: could not read declared file", "path", relPath, "err", err)
+			continue
 		}
+		declared[relPath] = data
 	}
+
+	report := det.CompareAll(declared, live)
+	r.met.RecordCheck(report)
+
+	if err := r.snap.Save(ctx, report); err != nil {
+		r.log.Warn("runner: snapshot save failed", "err", err)
+	}
+
+	n := notify.New(r.cfg, r.log)
+	n.Notify(ctx, report)
+	return nil
 }
