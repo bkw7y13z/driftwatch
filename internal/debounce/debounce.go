@@ -66,3 +66,12 @@ func (d *Debouncer) Purge() {
 		}
 	}
 }
+
+// Len returns the number of keys currently tracked by the debouncer.
+// This includes keys that may be within their quiet period as well as
+// keys that have expired but not yet been removed by Purge.
+func (d *Debouncer) Len() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.lastSeen)
+}
