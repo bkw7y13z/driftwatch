@@ -84,3 +84,28 @@ func TestRun_ContinuesOnError(t *testing.T) {
 		t.Fatalf("expected scheduler to continue after error, got %d ticks", count.Load())
 	}
 }
+
+func TestRun_StopsWhenContextCancelled(t *testing.T) {
+	var count atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+
+	s := scheduler.New(50*time.Millisecond, func(_ context.Context) error {
+		count.Add(1)
+		return nil
+	}, silentLogger())
+
+	// Let it run for a couple of ticks, then cancel and ensure it stops.
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		cancel()
+	}()
+
+	s.Run(ctx)
+
+	snap := count.Load()
+	time.Sleep(100 * time.Millisecond)
+
+	if after := count.Load(); after != snap {
+		t.Fatalf("scheduler continued running after context was cancelled: ticks went from %d to %d", snap, after)
+	}
+}
