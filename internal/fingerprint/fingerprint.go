@@ -55,3 +55,12 @@ func Parse(s string) (Result, bool) {
 	}
 	return Result{Algorithm: alg, Hex: parts[1]}, true
 }
+
+// Changed reports whether the fingerprint of content differs from a previously
+// recorded Result. This is a convenience wrapper around Sum and Equal, intended
+// for the common drift-detection pattern:
+//
+//	if fingerprint.Changed(stored, current) { /* drift detected */ }
+func Changed(previous Result, content string) bool {
+	return !Sum(content).Equal(previous)
+}
